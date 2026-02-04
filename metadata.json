@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Gateway Resort",
+  "description": "Experience modern comfort at Gateway Resort, a premier seaside destination in Bauang, La Union. Featuring 14 sea-facing guest rooms, a private beach, and a swimming pool.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
