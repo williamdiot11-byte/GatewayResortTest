@@ -2,12 +2,14 @@
 import React from 'react';
 import { Mail, Phone, MapPin, MessageSquare, Send, ArrowLeft } from 'lucide-react';
 import { RESORT_DATA } from '../constants';
+import { User } from '../types';
 
 interface InquirePageProps {
   onBack: () => void;
+  user: User | null;
 }
 
-const InquirePage: React.FC<InquirePageProps> = ({ onBack }) => {
+const InquirePage: React.FC<InquirePageProps> = ({ onBack, user }) => {
   return (
     <section className="bg-cozy min-h-screen py-24 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -86,6 +88,7 @@ const InquirePage: React.FC<InquirePageProps> = ({ onBack }) => {
                     <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3 ml-2">Full Guest Name</label>
                     <input 
                       type="text" 
+                      defaultValue={user?.name || ''}
                       placeholder="e.g. Maria Clara"
                       className="w-full px-8 py-5 rounded-[2rem] border-0 bg-white shadow-inner focus:ring-2 focus:ring-orange-500 focus:outline-none transition-all font-serif text-lg"
                     />
@@ -95,6 +98,7 @@ const InquirePage: React.FC<InquirePageProps> = ({ onBack }) => {
                     <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-3 ml-2">Email Address</label>
                     <input 
                       type="email" 
+                      defaultValue={user?.email || ''}
                       placeholder="yourname@email.com"
                       className="w-full px-8 py-5 rounded-[2rem] border-0 bg-white shadow-inner focus:ring-2 focus:ring-orange-500 focus:outline-none transition-all font-serif text-lg"
                     />

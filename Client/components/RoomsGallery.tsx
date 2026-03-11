@@ -3,12 +3,16 @@ import React from 'react';
 import { ROOMS } from '../constants';
 import { CheckCircle2 } from 'lucide-react';
 
-const RoomsGallery: React.FC = () => {
+interface RoomsGalleryProps {
+  onReserve: (roomId: string) => void;
+}
+
+const RoomsGallery: React.FC<RoomsGalleryProps> = ({ onReserve }) => {
   return (
     <section className="bg-cozy min-h-screen pb-24">
       {/* Page Header */}
       <div className="bg-slate-900 py-32 px-4 relative overflow-hidden">
-        <div className="max-w-7xl auto text-center relative z-10">
+        <div className="max-w-7xl mx-auto text-center relative z-10">
           <h1 className="text-6xl sm:text-8xl font-serif font-black text-white mb-8">Our Collection</h1>
           <p className="text-orange-200 text-2xl max-w-2xl mx-auto italic">
             Explore 14 unique sea-facing rooms, traditional kubos, and private cottages.
@@ -52,17 +56,18 @@ const RoomsGallery: React.FC = () => {
                   </div>
                 </div>
 
-                <a 
-                  href="tel:09398449670"
+                <button 
+                  onClick={() => onReserve(room.id)}
                   className="w-full py-4 bg-orange-100/50 text-orange-700 rounded-xl font-bold text-center hover:bg-orange-600 hover:text-white transition-all text-xs uppercase tracking-[0.2em] border border-orange-200/30 shadow-sm"
                 >
                   Reserve Now
-                </a>
+                </button>
               </div>
             </div>
           ))}
         </div>
       </div>
+
       
       <div className="max-w-7xl mx-auto px-4 mt-24">
         <div className="bg-slate-900 rounded-[3.5rem] p-20 text-center text-white relative overflow-hidden">

@@ -1,14 +1,17 @@
 
 import React, { useState, useEffect } from 'react';
-import { Phone } from 'lucide-react';
+import { Phone, ShieldCheck } from 'lucide-react';
+import { User } from '../types';
 
 interface HeaderProps {
   onNavigateHome: (sectionId?: string) => void;
   onNavigateGallery: () => void;
-  currentView: 'home' | 'gallery';
+  onNavigateAdmin: () => void;
+  currentView: 'home' | 'gallery' | 'admin';
+  user: User | null;
 }
 
-const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, currentView }) => {
+const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onNavigateAdmin, currentView, user }) => {
   const [activeSection, setActiveSection] = useState<string>('home');
 
   useEffect(() => {
@@ -100,9 +103,32 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, curr
                 <span className={`absolute bottom-0 left-0 h-[2.5px] bg-orange-600 transition-all duration-500 ${(activeSection === link.id || (link.id === 'rooms' && currentView === 'gallery')) ? 'w-full opacity-100' : 'w-0 opacity-0'}`} />
               </button>
             ))}
+            
+            {user?.role === 'admin' && (
+              <button
+                onClick={onNavigateAdmin}
+                className={`flex items-center gap-2 py-2 text-[10px] font-black tracking-[0.4em] uppercase transition-all duration-500 ${
+                  currentView === 'admin' ? 'text-orange-600' : 'text-slate-900 hover:text-orange-600'
+                }`}
+              >
+                <ShieldCheck size={14} />
+                Admin
+              </button>
+            )}
           </nav>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-4">
+            {/* Mobile Admin Button */}
+            {user?.role === 'admin' && (
+              <button
+                onClick={onNavigateAdmin}
+                className="md:hidden p-2 text-slate-900 hover:text-orange-600 transition-colors"
+                title="Admin Dashboard"
+              >
+                <ShieldCheck size={20} />
+              </button>
+            )}
+
             <a
               href="tel:09398449670"
               className="px-8 py-3 rounded-full font-black text-[9px] tracking-[0.3em] uppercase bg-white/10 backdrop-blur-md border border-white/20 text-slate-900 hover:bg-orange-600 hover:text-white hover:border-orange-600 transition-all shadow-sm"
