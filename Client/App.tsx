@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useUser, useClerk } from '@clerk/clerk-react';
 import Header from './components/Header.tsx';
 import Hero from './components/Hero.tsx';
 import Amenities from './components/Amenities.tsx';
@@ -9,17 +10,57 @@ import Footer from './components/Footer.tsx';
 import RoomsGallery from './components/RoomsGallery.tsx';
 import InquirePage from './components/InquirePage.tsx';
 import BookingPage from './components/BookingPage.tsx';
-import LoginPage from './components/LoginPage.tsx';
 import AdminDashboard from './components/AdminDashboard.tsx';
 import { User } from './types';
+import { useSupabaseClient } from './hooks/useSupabaseClient';
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'home' | 'gallery' | 'inquire' | 'booking' | 'login' | 'admin'>('home');
-  const [user, setUser] = useState<User | null>(null);
+  const { user: clerkUser, isSignedIn } = useUser();
+  const { signOut } = useClerk();
+  const supabase = useSupabaseClient();
+  const [currentView, setCurrentView] = useState<'home' | 'gallery' | 'inquire' | 'booking' | 'admin'>('home');
+  const [appUser, setAppUser] = useState<User | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
 
-  // Editor Bypass Logic
-  const isDevMode = process.env.NODE_ENV === 'development';
+  // ── Clerk → Supabase profile sync ───────────────────────────────
+  useEffect(() => {
+    if (isSignedIn && clerkUser) {
+      syncClerkUserToSupabase();
+    } else {
+      setAppUser(null);
+    }
+  }, [isSignedIn, clerkUser]);
+
+  const syncClerkUserToSupabase = async () => {
+    if (!clerkUser) return;
+
+    // Upsert profile — creates it on first sign-in (no webhook needed on localhost)
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: clerkUser.id,
+        email: clerkUser.primaryEmailAddress?.emailAddress || '',
+        full_name: clerkUser.fullName || '',
+      }, { onConflict: 'id' })
+      .select('full_name, role')
+      .single();
+
+    if (error) console.error('Supabase sync error:', error);
+
+    setAppUser({
+      id: clerkUser.id,
+      name: profile?.full_name || clerkUser.fullName || clerkUser.primaryEmailAddress?.emailAddress || 'Guest',
+      email: clerkUser.primaryEmailAddress?.emailAddress || '',
+      role: profile?.role === 'admin' ? 'admin' : 'user',
+    });
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    setAppUser(null);
+    setCurrentView('home');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const navigateToHome = (sectionId?: string) => {
     setCurrentView('home');
@@ -47,63 +88,16 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const navigateToAdmin = () => {
-    // Editor Exception Bypass for development mode
-    if (isDevMode) {
-      console.log('Dev Mode: Bypassing authentication for admin access');
-      if (!user) {
-        setUser({
-          id: 'dev-admin',
-          name: 'Developer Admin',
-          email: 'admin@gatewayresort.com',
-          role: 'admin'
-        });
-      }
-      setCurrentView('admin');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    if (user?.role === 'admin') {
-      setCurrentView('admin');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      setCurrentView('login');
-    }
-  };
-
   const handleReserve = (roomId: string) => {
     setSelectedRoomId(roomId);
-    
-    // Editor Exception Bypass
-    if (isDevMode) {
-      console.log('Dev Mode: Bypassing authentication for reservation');
-      // Simulate a logged in user if none exists
-      if (!user) {
-        setUser({
-          id: 'dev-user',
-          name: 'Developer User',
-          email: 'dev@gatewayresort.com',
-          role: 'admin'
-        });
-      }
-      setCurrentView('booking');
-    } else {
-      if (!user) {
-        setCurrentView('login');
-      } else {
-        setCurrentView('booking');
-      }
-    }
+    setCurrentView('booking');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleLogin = (userData: User) => {
-    setUser(userData);
-    if (selectedRoomId) {
-      setCurrentView('booking');
-    } else {
-      setCurrentView('home');
+  const navigateToAdmin = () => {
+    if (appUser?.role === 'admin') {
+      setCurrentView('admin');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -111,10 +105,12 @@ const App: React.FC = () => {
     <div className="selection:bg-orange-200">
       <Header 
         onNavigateHome={navigateToHome} 
-        onNavigateGallery={navigateToGallery} 
+        onNavigateGallery={navigateToGallery}
+        onSignOut={handleSignOut}
+        onNavigateLogin={() => {}}
         onNavigateAdmin={navigateToAdmin}
-        currentView={currentView === 'gallery' ? 'gallery' : currentView === 'admin' ? 'admin' : 'home'}
-        user={user}
+        currentView={currentView === 'admin' ? 'admin' : currentView === 'gallery' ? 'gallery' : 'home'}
+        user={appUser}
       />
       
       <main>
@@ -137,22 +133,14 @@ const App: React.FC = () => {
 
         {currentView === 'inquire' && (
           <div className="pt-24 bg-cozy min-h-screen">
-            <InquirePage onBack={() => navigateToHome()} user={user} />
+            <InquirePage onBack={() => navigateToHome()} user={appUser} />
             <Footer onNavigateHome={navigateToHome} />
           </div>
         )}
 
-        {currentView === 'login' && (
-          <div className="pt-40 bg-cozy min-h-screen">
-            <LoginPage onLogin={handleLogin} onBack={() => setCurrentView('gallery')} />
-            <Footer onNavigateHome={navigateToHome} />
-          </div>
-        )}
-
-        {currentView === 'booking' && user && selectedRoomId && (
+        {currentView === 'booking' && selectedRoomId && (
           <div className="pt-32 bg-cozy min-h-screen">
             <BookingPage 
-              user={user} 
               roomId={selectedRoomId} 
               onBack={() => setCurrentView('gallery')} 
             />
@@ -162,15 +150,15 @@ const App: React.FC = () => {
 
         {currentView === 'admin' && (
           <div className="pt-32 bg-cozy min-h-screen">
-            {user?.role === 'admin' ? (
-              <AdminDashboard />
+            {appUser?.role === 'admin' ? (
+              <AdminDashboard onBack={() => navigateToHome()} />
             ) : (
-              <div className="max-w-md mx-auto text-center py-20">
-                <h2 className="text-3xl font-serif font-bold text-slate-900 mb-4">Access Denied</h2>
+              <div className="max-w-7xl mx-auto px-4 py-24 text-center">
+                <h1 className="text-4xl font-serif font-black text-slate-900 mb-4">Access Denied</h1>
                 <p className="text-slate-600 mb-8">You do not have permission to view this page.</p>
                 <button 
-                  onClick={() => setCurrentView('home')}
-                  className="px-8 py-3 bg-orange-600 text-white rounded-xl font-bold"
+                  onClick={() => navigateToHome()}
+                  className="px-8 py-3 bg-orange-600 text-white rounded-lg font-bold hover:bg-orange-700 transition-colors"
                 >
                   Return Home
                 </button>

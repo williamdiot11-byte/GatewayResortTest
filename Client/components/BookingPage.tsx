@@ -1,16 +1,147 @@
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import Cal, { getCalApi } from "@calcom/embed-react";
-import { User } from '../types';
 import { ArrowLeft } from 'lucide-react';
 
 interface BookingPageProps {
-  user: User;
   roomId: string;
   onBack: () => void;
 }
 
-const BookingPage: React.FC<BookingPageProps> = ({ user, roomId, onBack }) => {
+const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
+  const { user } = useUser();
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+  const calLink = import.meta.env.VITE_CAL_BOOKING_LINK || 'william-diot-fbbkje/30min';
+  const [contactEmail, setContactEmail] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem('gateway_booking_contact_email');
+      if (saved && saved.trim()) {
+        return saved.trim();
+      }
+    }
+    return user?.primaryEmailAddress?.emailAddress || '';
+  });
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+  const [selectedPaymentOption, setSelectedPaymentOption] = useState<'online' | 'counter' | null>(null);
+  const [resolvedBookingId, setResolvedBookingId] = useState<string | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [isCounterConfirmed, setIsCounterConfirmed] = useState(false);
+  const latestContactEmailRef = useRef(contactEmail);
+  const latestUserRef = useRef(user);
+
+  useEffect(() => {
+    latestContactEmailRef.current = contactEmail;
+  }, [contactEmail]);
+
+  useEffect(() => {
+    latestUserRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    const normalized = contactEmail.trim();
+    if (typeof window !== 'undefined' && normalized) {
+      window.localStorage.setItem('gateway_booking_contact_email', normalized);
+    }
+  }, [contactEmail]);
+
+  const extractCalBookingDetails = (event: any): { bookingId: string | null; email: string | null } => {
+    const bookingIdCandidates = [
+      event?.data?.booking?.uid,
+      event?.detail?.booking?.uid,
+      event?.data?.uid,
+      event?.detail?.uid,
+      event?.data?.bookingUid,
+      event?.detail?.bookingUid,
+      event?.data?.bookingId,
+      event?.detail?.bookingId,
+      event?.booking?.uid,
+      event?.uid,
+      event?.data?.payload?.uid,
+      event?.detail?.payload?.uid,
+    ];
+
+    const emailCandidates = [
+      event?.data?.email,
+      event?.detail?.email,
+      event?.data?.booking?.email,
+      event?.detail?.booking?.email,
+      event?.data?.payload?.email,
+      event?.detail?.payload?.email,
+      event?.data?.attendees?.[0]?.email,
+      event?.detail?.attendees?.[0]?.email,
+      event?.data?.payload?.attendees?.[0]?.email,
+      event?.detail?.payload?.attendees?.[0]?.email,
+    ];
+
+    const bookingId = bookingIdCandidates.find((value) => typeof value === 'string' && value.trim()) || null;
+    const email = emailCandidates.find((value) => typeof value === 'string' && value.trim()) || null;
+
+    return {
+      bookingId: typeof bookingId === 'string' ? bookingId.trim() : null,
+      email: typeof email === 'string' ? email.trim() : null,
+    };
+  };
+
+  const registerBookingFromEvent = async (bookingId?: string | null, emailOverride?: string): Promise<string | null> => {
+    const normalizedBookingId = typeof bookingId === 'string' ? bookingId.trim() : '';
+    const fallbackEmail = (emailOverride || latestContactEmailRef.current).trim().toLowerCase();
+    if (!fallbackEmail) {
+      return null;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/payments/register-booking`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookingId: normalizedBookingId || undefined,
+          roomId,
+          email: fallbackEmail,
+          clerkUserId: latestUserRef.current?.id || null,
+          userName: latestUserRef.current?.fullName || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        if (import.meta.env.DEV) {
+          console.warn('register-booking fallback failed', {
+            status: response.status,
+            error: payload?.error || null,
+            bookingId: normalizedBookingId || null,
+            roomId,
+            email: fallbackEmail,
+          });
+        }
+        return null;
+      }
+
+      const payload = await response.json().catch(() => ({}));
+      return typeof payload?.bookingId === 'string' && payload.bookingId ? payload.bookingId : normalizedBookingId || null;
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn('register-booking fallback request error', {
+          error,
+          bookingId: normalizedBookingId || null,
+          roomId,
+          email: fallbackEmail,
+        });
+      }
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (user?.primaryEmailAddress?.emailAddress) {
+      setContactEmail(user.primaryEmailAddress.emailAddress);
+    }
+  }, [user]);
+
   useEffect(() => {
     (async function () {
       const cal = await getCalApi();
@@ -18,14 +149,203 @@ const BookingPage: React.FC<BookingPageProps> = ({ user, roomId, onBack }) => {
         theme: "light",
         styles: {
           branding: {
-            brandColor: "#EA580C", // orange-600
+            brandColor: "#EA580C",
           },
         },
-        hideEventTypeDetails: false,
+        hideEventTypeDetails: true,
         layout: "month_view",
+      });
+
+      cal('on', {
+        action: 'bookingSuccessful',
+        callback: async (event: any) => {
+          const { bookingId: bookingIdFromEvent, email: emailFromEvent } = extractCalBookingDetails(event);
+
+          if (import.meta.env.DEV) {
+            console.log('Cal bookingSuccessful payload parsed', {
+              bookingIdFromEvent,
+              emailFromEvent,
+              roomId,
+              hasData: !!event?.data,
+              hasDetail: !!event?.detail,
+            });
+          }
+
+          if (emailFromEvent) {
+            setContactEmail(emailFromEvent);
+          }
+
+          setShowPaymentModal(true);
+          setPaymentMessage('Reservation received. Preparing payment options...');
+
+          if (typeof bookingIdFromEvent === 'string' && bookingIdFromEvent) {
+            const registeredBookingId = await registerBookingFromEvent(
+              bookingIdFromEvent,
+              emailFromEvent || latestContactEmailRef.current
+            );
+            const effectiveBookingId = registeredBookingId || bookingIdFromEvent;
+            setResolvedBookingId(effectiveBookingId);
+            setPaymentMessage(
+              registeredBookingId
+                ? 'Reservation confirmed. Choose your payment option below.'
+                : 'Reservation confirmed. We are syncing your booking details now. If needed, retry in a few seconds.'
+            );
+            return;
+          }
+
+          const fallbackEmail = emailFromEvent || latestContactEmailRef.current;
+          if (fallbackEmail) {
+            const found = await resolveLatestBookingId(fallbackEmail);
+            if (!found) {
+              setPaymentMessage('Booking confirmed, but we are still syncing details. Please wait a few seconds and try again.');
+            }
+          }
+        },
       });
     })();
   }, []);
+
+  const resolveLatestBookingId = async (emailOverride?: string): Promise<string | null> => {
+    const lookupEmail = (emailOverride || contactEmail).trim();
+    if (!lookupEmail) {
+      setPaymentMessage('Add your email address first so we can locate your booking.');
+      return null;
+    }
+
+    try {
+      setLookupLoading(true);
+      setPaymentMessage('Looking up your latest reservation...');
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const response = await fetch(`${apiBaseUrl}/api/payments/resolve-latest-booking`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId,
+            email: lookupEmail,
+            clerkUserId: user?.id || null,
+          }),
+        });
+
+        if (response.status === 404) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to load booking. Please try again in a few seconds.');
+        }
+
+        if (payload?.bookingId) {
+          setResolvedBookingId(payload.bookingId);
+          setPaymentMessage('Reservation confirmed. Choose your payment option below.');
+          return payload.bookingId;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      const fallbackBookingId = await registerBookingFromEvent(undefined, lookupEmail);
+      if (fallbackBookingId) {
+        setResolvedBookingId(fallbackBookingId);
+        setPaymentMessage('Reservation synced. Choose your payment option below.');
+        return fallbackBookingId;
+      }
+
+      setPaymentMessage('No booking found yet. Please wait a moment, then try again.');
+      setResolvedBookingId(null);
+      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to locate your reservation.';
+      setPaymentMessage(message);
+      setResolvedBookingId(null);
+      return null;
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handlePayNow = async () => {
+    try {
+      setPaymentLoading(true);
+      setSelectedPaymentOption('online');
+
+      const bookingId = resolvedBookingId || (await resolveLatestBookingId());
+      if (!bookingId) {
+        return;
+      }
+
+      const amount = Number(import.meta.env.VITE_DEFAULT_BOOKING_AMOUNT || 3000);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error('Invalid payment amount configuration.');
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/payments/create-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookingId,
+          amount,
+          currency: 'usd',
+          customerEmail: contactEmail.trim(),
+          roomLabel: `Gateway Resort room ${roomId}`,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload?.checkoutUrl) {
+        throw new Error(payload?.error || 'Unable to create checkout session.');
+      }
+
+      window.location.href = payload.checkoutUrl;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to start payment flow.';
+      setPaymentMessage(message);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const handlePayAtCounter = async () => {
+    setSelectedPaymentOption('counter');
+    setPaymentLoading(true);
+
+    try {
+      const bookingId = resolvedBookingId || (await resolveLatestBookingId());
+      if (!bookingId) {
+        return;
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/payments/mark-counter-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bookingId,
+          customerEmail: contactEmail.trim().toLowerCase(),
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to save pay-at-counter preference.');
+      }
+
+      setIsCounterConfirmed(true);
+      setPaymentMessage('Pay at counter selected. Please confirm your booking from the email we send you.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save pay-at-counter preference.';
+      setPaymentMessage(message);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-24">
@@ -43,35 +363,105 @@ const BookingPage: React.FC<BookingPageProps> = ({ user, roomId, onBack }) => {
             Booking for: <span className="text-orange-600 font-bold not-italic">{roomId.replace(/-/g, ' ').toUpperCase()}</span>
           </p>
         </div>
-        <div className="text-right hidden sm:block">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Authenticated as</p>
-          <p className="text-slate-900 font-bold">{user.name}</p>
-          <p className="text-slate-500 text-sm">{user.email}</p>
-        </div>
+        {user && (
+          <div className="text-right hidden sm:block">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">Authenticated as</p>
+            <p className="text-slate-900 font-bold">{user.fullName || 'Guest'}</p>
+            <p className="text-slate-500 text-sm">{user.primaryEmailAddress?.emailAddress}</p>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-[3rem] shadow-2xl shadow-orange-900/5 border border-orange-100 overflow-hidden min-h-[700px]">
         <Cal
-          calLink="gateway-resort/stay"
+          calLink={calLink}
           style={{ width: "100%", height: "100%", minHeight: "700px" }}
           config={{
-            name: user.name,
-            email: user.email,
-            notes: `Booking for Room ID: ${roomId}`,
+            name: user?.fullName || '',
+            email: user?.primaryEmailAddress?.emailAddress || '',
+            notes: `Reservation request for room reference: ${roomId}`,
             theme: "light",
+            metadata: {
+              clerkUserId: user?.id || '',
+              roomId: roomId
+            }
           }}
         />
       </div>
-      
-      <div className="mt-12 p-8 bg-orange-50 rounded-3xl border border-orange-100 flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-orange-600 rounded-full flex items-center justify-center text-white font-bold">!</div>
-          <p className="text-orange-800 text-sm font-medium max-w-xl">
-            Your details have been pre-filled for a faster booking experience. Please select your preferred date and time to confirm your reservation.
-          </p>
+
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white rounded-3xl border border-orange-100 shadow-2xl p-7">
+            <h2 className="text-2xl font-serif font-black text-slate-900">Choose Your Payment Option</h2>
+            <p className="text-slate-600 text-sm mt-2">
+              Your reservation is awaiting email confirmation.
+            </p>
+
+            <div className="space-y-2 text-orange-900 mt-4">
+              <p className="text-sm">
+                We will hold your room until 6:00 PM on arrival day if it is not confirmed.
+              </p>
+              <p className="text-sm">
+                After 6:00 PM, unconfirmed reservations may be released.
+              </p>
+              <p className="text-sm">
+                No cancellation fee is charged.
+              </p>
+            </div>
+
+            <div className="mt-5">
+              <label htmlFor="payment-email" className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                Confirmation Email
+              </label>
+              <input
+                id="payment-email"
+                type="email"
+                value={contactEmail}
+                onChange={(event) => setContactEmail(event.target.value)}
+                placeholder="you@example.com"
+                className="mt-2 w-full px-4 py-2 rounded-lg border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={handlePayNow}
+                disabled={paymentLoading || lookupLoading || isCounterConfirmed}
+                className="px-6 py-3 bg-orange-600 text-white rounded-lg font-bold hover:bg-orange-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {paymentLoading && selectedPaymentOption === 'online' ? 'Starting Payment...' : 'Pay Now'}
+              </button>
+
+              <button
+                onClick={handlePayAtCounter}
+                disabled={paymentLoading || lookupLoading || isCounterConfirmed}
+                className="px-6 py-3 bg-white text-slate-900 border border-slate-300 rounded-lg font-bold hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Pay at Counter
+              </button>
+            </div>
+
+            {isCounterConfirmed && (
+              <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                Pay-at-counter saved. Your room is now waiting for email confirmation.
+              </div>
+            )}
+
+            {paymentMessage && (
+              <p className="mt-4 text-sm text-slate-700">{paymentMessage}</p>
+            )}
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowPaymentModal(false)}
+                className="text-sm font-semibold text-slate-600 hover:text-slate-900"
+              >
+                {isCounterConfirmed ? "I'll Confirm by Email" : 'Close'}
+              </button>
+            </div>
+          </div>
         </div>
-        <p className="text-orange-300 text-[10px] font-black uppercase tracking-widest">Powered by Cal.com</p>
-      </div>
+      )}
     </div>
   );
 };

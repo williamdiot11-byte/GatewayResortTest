@@ -1,17 +1,21 @@
 
 import React, { useState, useEffect } from 'react';
-import { Phone, ShieldCheck } from 'lucide-react';
+import { Phone } from 'lucide-react';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/clerk-react';
 import { User } from '../types';
 
 interface HeaderProps {
   onNavigateHome: (sectionId?: string) => void;
   onNavigateGallery: () => void;
+  onSignOut: () => void;
+  onNavigateLogin: () => void;
   onNavigateAdmin: () => void;
   currentView: 'home' | 'gallery' | 'admin';
   user: User | null;
 }
 
-const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onNavigateAdmin, currentView, user }) => {
+const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSignOut, onNavigateLogin, onNavigateAdmin, currentView, user }) => {
+  const { isSignedIn } = useUser();
   const [activeSection, setActiveSection] = useState<string>('home');
 
   useEffect(() => {
@@ -46,6 +50,12 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onNa
     { id: 'rooms', label: 'Rooms' },
     { id: 'contact', label: 'Contact' },
   ];
+
+  const handleAdminClick = () => {
+    if (user?.role === 'admin') {
+      onNavigateAdmin();
+    }
+  };
 
   return (
     <>
@@ -103,30 +113,57 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onNa
                 <span className={`absolute bottom-0 left-0 h-[2.5px] bg-orange-600 transition-all duration-500 ${(activeSection === link.id || (link.id === 'rooms' && currentView === 'gallery')) ? 'w-full opacity-100' : 'w-0 opacity-0'}`} />
               </button>
             ))}
-            
-            {user?.role === 'admin' && (
-              <button
-                onClick={onNavigateAdmin}
-                className={`flex items-center gap-2 py-2 text-[10px] font-black tracking-[0.4em] uppercase transition-all duration-500 ${
-                  currentView === 'admin' ? 'text-orange-600' : 'text-slate-900 hover:text-orange-600'
-                }`}
-              >
-                <ShieldCheck size={14} />
-                Admin
-              </button>
-            )}
           </nav>
 
           <div className="flex items-center gap-4">
-            {/* Mobile Admin Button */}
             {user?.role === 'admin' && (
               <button
-                onClick={onNavigateAdmin}
-                className="md:hidden p-2 text-slate-900 hover:text-orange-600 transition-colors"
-                title="Admin Dashboard"
+                onClick={handleAdminClick}
+                className={`px-5 py-3 rounded-full font-black text-[9px] tracking-[0.3em] uppercase border transition-all shadow-sm ${
+                  currentView === 'admin'
+                    ? 'bg-orange-600 text-white border-orange-600'
+                    : 'bg-white/10 backdrop-blur-md border-white/20 text-slate-900 hover:bg-orange-600 hover:text-white hover:border-orange-600'
+                }`}
               >
-                <ShieldCheck size={20} />
+                Admin
               </button>
+            )}
+
+            {isSignedIn ? (
+              <UserButton
+                afterSignOutUrl="/"
+                userProfileMode="modal"
+                userProfileProps={{
+                  appearance: {
+                    elements: {
+                      // Keep Manage profile access, but hide avatar image editing controls.
+                      avatarImageActions: 'hidden',
+                      avatarImageActionsUpload: 'hidden',
+                      avatarImageActionsRemove: 'hidden',
+                    },
+                  },
+                }}
+                appearance={{
+                  elements: {
+                    avatarBox: 'w-9 h-9',
+                    userButtonPopoverCard: 'rounded-xl shadow-lg border border-slate-100',
+                    userButtonPopoverActionButton: 'text-slate-700 hover:bg-orange-50 hover:text-orange-600',
+                  }
+                }}
+              />
+            ) : (
+              <div className="flex items-center gap-3">
+                <SignInButton mode="modal">
+                  <button className="px-8 py-3 rounded-full font-black text-[9px] tracking-[0.3em] uppercase bg-white/10 backdrop-blur-md border border-white/20 text-slate-900 hover:bg-orange-600 hover:text-white hover:border-orange-600 transition-all shadow-sm">
+                    Sign In
+                  </button>
+                </SignInButton>
+                <SignUpButton mode="modal">
+                  <button className="px-4 py-2.5 rounded-full font-black text-[8px] tracking-[0.24em] uppercase text-orange-700 border border-orange-200 bg-orange-50/80 hover:bg-orange-100 transition-all">
+                    Create Account
+                  </button>
+                </SignUpButton>
+              </div>
             )}
 
             <a

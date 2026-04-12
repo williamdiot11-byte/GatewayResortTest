@@ -10,9 +10,15 @@
     "dev": "npm run dev --workspace=Client",
     "build": "npm run build --workspace=Client",
     "dev:server": "npm run dev --workspace=Server",
-    "dev:all": "concurrently \"npm run dev --workspace=Client\" \"npm run dev --workspace=Server\""
+    "dev:all": "concurrently \"npm run dev --workspace=Client\" \"npm run dev --workspace=Server\"",
+    "dev:webhooks": "node scripts/local-cal-webhook.js"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
+  },
+  "dependencies": {
+    "stripe": "^17.7.0",
+    "@supabase/supabase-js": "^2.100.0",
+    "svix": "^1.89.0"
   }
 }

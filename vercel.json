@@ -1,0 +1,30 @@
+{
+  "builds": [
+    {
+      "src": "api/**/*.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/webhooks/cal",
+      "dest": "/api/webhooks/cal.ts"
+    },
+    {
+      "src": "/api/webhooks/clerk",
+      "dest": "/api/webhooks/clerk.ts"
+    },
+    {
+      "src": "/api/webhooks/stripe",
+      "dest": "/api/webhooks/stripe.ts"
+    },
+    {
+      "src": "/api/payments/create-checkout-session",
+      "dest": "/api/payments/create-checkout-session.ts"
+    },
+    {
+      "src": "/api/reconciliation/bookings-payments",
+      "dest": "/api/reconciliation/bookings-payments.ts"
+    }
+  ]
+}
