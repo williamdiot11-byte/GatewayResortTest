@@ -5,7 +5,9 @@ import { AMENITIES, getIcon } from '../constants.tsx';
 const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
-  const requestRef = useRef<number>(null);
+  const scrollCalcRef = useRef<number>(null);
+  const animationRef = useRef<number>(null);
+  const targetProgressRef = useRef(0);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -20,18 +22,39 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
         const start = sectionTop;
         const end = sectionTop + sectionHeight - windowHeight;
         const progress = Math.min(Math.max((currentScroll - start) / (end - start), 0), 1);
-        setScrollProgress(progress);
+        targetProgressRef.current = progress;
       };
 
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      requestRef.current = requestAnimationFrame(update);
+      if (scrollCalcRef.current) cancelAnimationFrame(scrollCalcRef.current);
+      scrollCalcRef.current = requestAnimationFrame(update);
+    };
+
+    const animateProgress = () => {
+      setScrollProgress((previous) => {
+        const target = targetProgressRef.current;
+        const delta = target - previous;
+
+        if (Math.abs(delta) < 0.0005) {
+          return target;
+        }
+
+        // Damped interpolation removes aggressive jumps from direct scroll mapping.
+        // Slightly higher response keeps the opening motion from feeling delayed.
+        const smoothing = previous < 0.04 && target > previous ? 0.22 : 0.14;
+        return previous + delta * smoothing;
+      });
+
+      animationRef.current = requestAnimationFrame(animateProgress);
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
+    animationRef.current = requestAnimationFrame(animateProgress);
+
     return () => {
       window.removeEventListener('scroll', handleScroll);
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (scrollCalcRef.current) cancelAnimationFrame(scrollCalcRef.current);
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, []);
 
@@ -46,20 +69,20 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
 
   const getInitialOffset = (index: number) => {
     const offsets = [
-      { x: -160, y: -160 }, 
-      { x: 160, y: -160 },  
-      { x: -180, y: 0 },    
-      { x: 180, y: 0 },     
-      { x: 160, y: 160 },   
-      { x: -160, y: 160 }   
+      { x: -95, y: -95 }, 
+      { x: 95, y: -95 },  
+      { x: -110, y: 0 },    
+      { x: 110, y: 0 },     
+      { x: 95, y: 95 },   
+      { x: -95, y: 95 }   
     ];
     return offsets[index];
   };
 
   const getRingOffset = (index: number) => {
-    const distH = 22; 
-    const distV = 18; 
-    const midH = 28;  
+    const distH = 18; 
+    const distV = 14; 
+    const midH = 22;  
     const offsets = [
       { x: -distH, y: -distV }, 
       { x: distH, y: -distV },  
@@ -71,11 +94,12 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
     return offsets[index];
   };
 
-  const flyP = Math.min(Math.max((scrollProgress - 0.02) / 0.28, 0), 1);
-  const syncP = Math.min(Math.max((scrollProgress - 0.30) / 0.40, 0), 1);
-  const exitP = Math.min(Math.max((scrollProgress - 0.88) / 0.12, 0), 1);
-  const unzoomP = Math.min(Math.max(scrollProgress / 0.55, 0), 1);
-  const fadeP = Math.min(Math.max((scrollProgress - 0.25) / 0.30, 0), 1);
+  const flyP = Math.min(Math.max((scrollProgress + 0.03) / 0.36, 0), 1);
+  const syncP = Math.min(Math.max((scrollProgress - 0.28) / 0.40, 0), 1);
+  const exitP = Math.min(Math.max((scrollProgress - 0.92) / 0.08, 0), 1);
+  const unzoomP = Math.min(Math.max(scrollProgress / 0.75, 0), 1);
+  const fadeP = Math.min(Math.max((scrollProgress - 0.35) / 0.40, 0), 1);
+  const appearP = Math.min(Math.max((scrollProgress + 0.02) / 0.04, 0), 1);
 
   const getCardStyle = (index: number) => {
     const initial = getInitialOffset(index);
@@ -85,12 +109,12 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
     const stackY = -15;
     const currentX = ringX * (1 - syncP);
     const currentY = (ringY * (1 - syncP)) + (stackY * syncP);
-    const exitYOffset = exitP * -120;
-    const scale = (0.3 + (flyP * 0.5)) * (1 - (syncP * 0.2));
+    const exitYOffset = exitP * -80;
+    const scale = (0.5 + (flyP * 0.35)) * (1 - (syncP * 0.1));
 
     return {
       transform: `translate3d(${currentX}vw, ${currentY + exitYOffset}vh, 0) scale(${scale})`,
-      opacity: flyP > 0.01 ? 1 : flyP * 100,
+      opacity: 0.28 + (appearP * 0.72),
       zIndex: 100 + index, 
       borderRadius: syncP > 0.5 ? '6rem' : '2.5rem',
       boxShadow: `0 25px 50px -12px rgba(0,0,0,${0.2 + (flyP * 0.3)})`,
@@ -100,13 +124,13 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
 
   const hScale = 1.5 - (unzoomP * 1.2);
   const hOpacity = 1 - fadeP;
-  const ctaRevealP = Math.min(Math.max((scrollProgress - 0.65) / 0.20, 0), 1);
-  const ctaTargetY = 25; 
-  const ctaEntranceY = (1 - ctaRevealP) * 10; 
-  const ctaExitY = exitP * -120; 
+  const ctaRevealP = Math.min(Math.max((scrollProgress - 0.72) / 0.18, 0), 1);
+  const ctaTargetY = 22; 
+  const ctaEntranceY = (1 - ctaRevealP) * 6; 
+  const ctaExitY = exitP * -80; 
 
   return (
-    <section ref={containerRef} id="amenities" className="relative h-[400vh] bg-cozy" aria-label="Resort Amenities">
+    <section ref={containerRef} id="amenities" className="relative h-[300vh] bg-cozy" aria-label="Resort Amenities">
       <div className="sticky top-0 h-screen w-full overflow-hidden flex items-center justify-center">
         
         <div 
@@ -131,6 +155,7 @@ const Amenities: React.FC<{ onSeeRooms: () => void }> = ({ onSeeRooms }) => {
           }}
         >
           <button 
+            type="button"
             onClick={onSeeRooms}
             aria-label="View room collection"
             className="group flex flex-col items-center justify-center cursor-pointer pointer-events-auto transition-transform hover:scale-105 duration-500 focus:outline-none"

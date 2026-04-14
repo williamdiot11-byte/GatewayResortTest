@@ -1,151 +1,84 @@
-# Supabase Schema Setup Checklist
+# Supabase Schema Setup Checklist (Current)
 
-## ✅ Pre-Setup
+## 1. Pre-Setup
 - [ ] Supabase project created
-- [ ] Project URL saved to `.env.local` as `VITE_SUPABASE_URL`
-- [ ] Anon key saved to `.env.local` as `VITE_SUPABASE_ANON_KEY`
-- [ ] Service role key saved for webhooks (keep this secret!)
+- [ ] Client env configured with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
+- [ ] Server env configured with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 
-## 📊 Apply Schema
+## 2. Apply Database SQL Files
 
-### Via Supabase Dashboard (Easiest)
-1. [ ] Go to Supabase Dashboard → SQL Editor
-2. [ ] Open `supabase-schema.sql` from project root
-3. [ ] Copy entire file contents
-4. [ ] Paste into SQL Editor
-5. [ ] Click **Run** button
-6. [ ] Wait for success message
+Run these SQL files in order from Supabase SQL Editor:
+1. [ ] `supabase-schema.sql`
+2. [ ] `booking-metadata-table.sql`
+3. [ ] `payment-event-log-table.sql`
 
-### Verify Tables Created
-Go to **Table Editor** and check:
-- [ ] `profiles` table exists (3 columns minimum)
-- [ ] `booking_metadata` table exists
-- [ ] `analytics_events` table exists (optional)
+## 3. Verify Tables
 
-### Verify RLS Enabled
-In **Table Editor**, each table should show:
-- [ ] 🔒 Lock icon next to table name (RLS enabled)
-- [ ] Policies tab shows at least 2 policies per table
+In Supabase Table Editor:
+- [ ] `profiles` exists
+- [ ] `booking_metadata` exists
+- [ ] `payment_event_log` exists
+- [ ] `analytics_events` exists (optional)
 
-## 🔐 Configure Clerk JWT
+## 4. Verify RLS Policies
 
-### In Clerk Dashboard
-1. [ ] Go to **JWT Templates**
-2. [ ] Click **New Template** → Select "Supabase"
-3. [ ] OR create custom template named `supabase` with claim:
-   ```json
-   {
-     "sub": "{{user.id}}"
-   }
-   ```
-4. [ ] Save template
+- [ ] RLS enabled for `profiles`
+- [ ] RLS enabled for `booking_metadata`
+- [ ] RLS enabled for `payment_event_log`
+- [ ] Admin select policies exist for ops tables
 
-### Verify JWT Template
-1. [ ] Sign in to your app with a test account
-2. [ ] Open browser DevTools → Application → Local Storage
-3. [ ] Find Clerk token (starts with `eyJ...`)
-4. [ ] Decode at [jwt.io](https://jwt.io)
-5. [ ] Verify `sub` claim has your Clerk user ID
+## 5. Configure Clerk JWT Template
 
-## 👤 Create Your Admin User
+In Clerk Dashboard:
+1. [ ] Create template named `supabase`
+2. [ ] Include claim:
 
-### Step 1: Create Account in App
-1. [ ] Run `npm run dev` from Client folder
-2. [ ] Click "Sign Up" and create your account
-3. [ ] Verify account creation (check email)
-
-### Step 2: Get Your Clerk User ID
-1. [ ] Go to Clerk Dashboard → Users
-2. [ ] Find your user
-3. [ ] Copy User ID (looks like: `user_2abc123...`)
-
-### Step 3: Make Yourself Admin
-1. [ ] Go to Supabase Dashboard → SQL Editor
-2. [ ] Run this query (replace with your ID):
-   ```sql
-   UPDATE profiles
-   SET role = 'admin'
-   WHERE id = 'user_YOUR_CLERK_USER_ID';
-   ```
-3. [ ] Check that 1 row was updated
-
-### Verify Admin Access
-1. [ ] Refresh your app
-2. [ ] Click "Admin" in header
-3. [ ] You should see Admin Dashboard (not "Access Denied")
-
-## 🧪 Test Database Connection
-
-### Test 1: Profile Sync
-1. [ ] Create new test account in app
-2. [ ] Go to Supabase → Table Editor → `profiles`
-3. [ ] Verify new row appears with correct email
-
-### Test 2: Clerk JWT Auth
-1. [ ] Sign in to app
-2. [ ] Open browser console
-3. [ ] Run: 
-   ```javascript
-   const token = await window.__clerk?.session?.getToken({ template: 'supabase' })
-   console.log(token)
-   ```
-4. [ ] Token should print (long string starting with `eyJ`)
-
-### Test 3: RLS Policies
-1. [ ] Sign in as regular user (not admin)
-2. [ ] Try to view Admin Dashboard
-3. [ ] Should see "Access Denied" (RLS working!)
-
-## 🚨 Troubleshooting
-
-### Issue: Tables not appearing
-**Solution:** 
-- Check SQL Editor for errors when running schema
-- Ensure you're in correct project
-- Try refreshing Table Editor page
-
-### Issue: "auth.uid() function not found"
-**Solution:**
-```sql
--- Run this in SQL Editor
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
-  SELECT COALESCE(
-    nullif(current_setting('request.jwt.claims', true)::json->>'sub', '')::uuid,
-    '00000000-0000-0000-0000-000000000000'::uuid
-  );
-$$ LANGUAGE sql STABLE;
+```json
+{
+  "sub": "{{user.id}}"
+}
 ```
 
-### Issue: RLS blocking all queries
-**Solution:**
-- Verify Clerk JWT template is named exactly `supabase`
-- Check that `sub` claim is in JWT token
-- Temporarily disable RLS to test:
-  ```sql
-  ALTER TABLE profiles DISABLE ROW LEVEL SECURITY;
-  ```
+## 6. Create Admin User
 
-### Issue: User not syncing to Supabase
-**Solution:**
-- Webhook not set up yet (that's next step!)
-- For now, manually insert profile:
-  ```sql
-  INSERT INTO profiles (id, email, full_name, role)
-  VALUES ('your_clerk_user_id', 'your@email.com', 'Your Name', 'admin');
-  ```
+1. [ ] Create/sign in user in app
+2. [ ] Copy Clerk user id
+3. [ ] Run in SQL Editor:
 
-## ✅ Completion Checklist
+```sql
+UPDATE profiles
+SET role = 'admin'
+WHERE id = 'user_YOUR_CLERK_USER_ID';
+```
 
-Before moving to next step:
-- [ ] All tables created successfully
-- [ ] RLS enabled on all tables
-- [ ] Clerk JWT template configured
-- [ ] At least 1 admin user exists
-- [ ] Can sign in and access Admin Dashboard
-- [ ] Test user profile appears in Supabase
+## 7. Runtime Integration Checks
 
----
+- [ ] App can sign in and sync profile into `profiles`
+- [ ] Booking flow writes/updates `booking_metadata`
+- [ ] Payment webhooks can write `payment_event_log`
+- [ ] Admin dashboard can read booking/payment status
 
-**Status:** Schema setup complete! 🎉
+## 8. Troubleshooting
 
-**Next:** Deploy webhooks to sync users automatically
+### If `booking_metadata` is missing
+- Apply `booking-metadata-table.sql` explicitly.
+
+### If `payment_event_log` is missing
+- Apply `payment-event-log-table.sql` explicitly.
+
+### If webhook writes fail with permissions
+- Confirm server is using `SUPABASE_SERVICE_ROLE_KEY`.
+- Confirm service-role insert policies are present.
+
+### If users cannot read their own bookings
+- Verify Clerk `supabase` JWT template emits `sub`.
+- Verify `booking_metadata.user_id` is populated for signed-in flows.
+
+## Completion Criteria
+
+- [ ] All required tables exist
+- [ ] RLS and policies are in place
+- [ ] Admin access is verified
+- [ ] Booking and payment writes are verified end-to-end
+
+Next step: verify webhook secrets and run deploy smoke tests against the deployed API URL.

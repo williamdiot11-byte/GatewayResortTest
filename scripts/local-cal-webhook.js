@@ -102,6 +102,18 @@ function extractRoomIdFromPayload(payload, metadata) {
   return null;
 }
 
+function extractClientBookingRef(metadata, payload) {
+  const candidates = [
+    metadata?.clientBookingRef,
+    metadata?.client_booking_ref,
+    payload?.metadata?.clientBookingRef,
+    payload?.metadata?.client_booking_ref,
+  ];
+
+  const value = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return typeof value === 'string' ? value.trim() : null;
+}
+
 async function storeCalWebhook(body) {
   const { triggerEvent, payload } = body || {};
 
@@ -128,6 +140,7 @@ async function storeCalWebhook(body) {
   const normalizedEmail =
     normalizeEmail(attendee?.email) || normalizeEmail(payload?.email) || 'unknown@unknown.local';
   const resolvedRoomId = extractRoomIdFromPayload(payload, metadata);
+  const clientBookingRef = extractClientBookingRef(metadata, payload);
 
   const baseRecord = {
     booking_id: bookingId,
@@ -139,6 +152,7 @@ async function storeCalWebhook(body) {
     event_id: payload?.eventTypeId ? String(payload.eventTypeId) : null,
     metadata: {
       ...metadata,
+      ...(clientBookingRef ? { clientBookingRef } : {}),
       calTriggerEvent: normalizedEvent,
       rawPayload: payload,
     },
@@ -426,11 +440,13 @@ async function createStripeCheckoutSession(body) {
 }
 
 async function registerBooking(body) {
-  const { bookingId, roomId, email, clerkUserId, userName } = body || {};
+  const { bookingId, clientBookingRef, roomId, email, clerkUserId, userName } = body || {};
   const normalizedBookingId =
     typeof bookingId === 'string' && bookingId.trim()
       ? bookingId.trim()
       : `pending-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const normalizedClientBookingRef =
+    typeof clientBookingRef === 'string' && clientBookingRef.trim() ? clientBookingRef.trim() : '';
   const normalizedRoomId = typeof roomId === 'string' ? roomId.trim() : '';
   const normalizedEmail = normalizeEmail(email);
 
@@ -439,6 +455,19 @@ async function registerBooking(body) {
   }
 
   const validUserId = await resolveValidUserId(clerkUserId);
+  const { data: existingRow, error: existingRowError } = await supabase
+    .from('booking_metadata')
+    .select('metadata')
+    .eq('booking_id', normalizedBookingId)
+    .maybeSingle();
+
+  if (existingRowError) {
+    console.error('Error loading existing booking during fallback registration:', existingRowError);
+    return { status: 500, body: { error: 'Failed to register booking' } };
+  }
+
+  const existingMetadata =
+    typeof existingRow?.metadata === 'object' && existingRow.metadata ? existingRow.metadata : {};
 
   const { error } = await supabase
     .from('booking_metadata')
@@ -451,8 +480,10 @@ async function registerBooking(body) {
         user_name: typeof userName === 'string' ? userName : null,
         booking_date: new Date().toISOString(),
         metadata: {
-          bookingSource: 'cal_embed_fallback',
+          ...existingMetadata,
+          bookingSource: existingMetadata.bookingSource || 'cal_embed_fallback',
           calTriggerEvent: 'BOOKING_CREATED',
+          ...(normalizedClientBookingRef ? { clientBookingRef: normalizedClientBookingRef } : {}),
         },
         updated_at: new Date().toISOString(),
       },
@@ -464,27 +495,57 @@ async function registerBooking(body) {
     return { status: 500, body: { error: 'Failed to register booking' } };
   }
 
-  return { status: 200, body: { success: true, bookingId: normalizedBookingId } };
+  return {
+    status: 200,
+    body: {
+      success: true,
+      bookingId: normalizedBookingId,
+      clientBookingRef: normalizedClientBookingRef || undefined,
+    },
+  };
 }
 
 async function resolveLatestBooking(body) {
-  const { roomId, email, clerkUserId } = body || {};
+  const { roomId, email, clientBookingRef, clerkUserId } = body || {};
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const normalizedClientBookingRef =
+    typeof clientBookingRef === 'string' ? clientBookingRef.trim() : '';
 
-  if (!roomId || !normalizedEmail) {
-    return { status: 400, body: { error: 'roomId and email are required' } };
+  if (!normalizedClientBookingRef && (!roomId || !normalizedEmail)) {
+    return { status: 400, body: { error: 'clientBookingRef or roomId and email are required' } };
   }
 
-  let { data, error } = await supabase
-    .from('booking_metadata')
-    .select('booking_id, created_at')
-    .eq('room_id', roomId)
-    .eq('user_email', normalizedEmail)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let data = null;
+  let error = null;
 
-  if (!data && clerkUserId) {
+  if (normalizedClientBookingRef) {
+    const directMatch = await supabase
+      .from('booking_metadata')
+      .select('booking_id, created_at')
+      .contains('metadata', { clientBookingRef: normalizedClientBookingRef })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    data = directMatch.data;
+    error = directMatch.error;
+  }
+
+  if (!data && !error && roomId && normalizedEmail) {
+    const directByRoomAndEmail = await supabase
+      .from('booking_metadata')
+      .select('booking_id, created_at')
+      .eq('room_id', roomId)
+      .eq('user_email', normalizedEmail)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    data = directByRoomAndEmail.data;
+    error = directByRoomAndEmail.error;
+  }
+
+  if (!data && !error && clerkUserId && roomId) {
     const fallback = await supabase
       .from('booking_metadata')
       .select('booking_id, created_at')
@@ -498,7 +559,7 @@ async function resolveLatestBooking(body) {
     error = fallback.error;
   }
 
-  if (!data && !error) {
+  if (!data && !error && normalizedEmail) {
     const recentThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const fallbackRows = await supabase
       .from('booking_metadata')
@@ -512,6 +573,13 @@ async function resolveLatestBooking(body) {
       error = fallbackRows.error;
     } else {
       const matched = (fallbackRows.data || []).find((row) => {
+        if (normalizedClientBookingRef) {
+          const extractedClientBookingRef = extractClientBookingRef(row?.metadata || {}, row?.metadata?.rawPayload || {});
+          if (extractedClientBookingRef === normalizedClientBookingRef) {
+            return true;
+          }
+        }
+
         if (row?.room_id === roomId) {
           return true;
         }
@@ -563,7 +631,7 @@ async function markCounterPayment(body) {
 
   const { data: booking, error: selectError } = await supabase
     .from('booking_metadata')
-    .select('booking_id, metadata')
+    .select('booking_id, room_id, user_email, metadata')
     .eq('booking_id', normalizedBookingId)
     .maybeSingle();
 
@@ -579,16 +647,29 @@ async function markCounterPayment(body) {
   const existingMetadata =
     typeof booking.metadata === 'object' && booking.metadata ? booking.metadata : {};
 
+  const emailTarget = normalizedEmail || normalizeEmail(booking.user_email);
+  const emailResult = emailTarget
+    ? await sendCounterConfirmationEmail({
+        toEmail: emailTarget,
+        bookingId: normalizedBookingId,
+        roomId: booking.room_id,
+      })
+    : { status: 'skipped', error: 'No recipient email available' };
+
   const { error: updateError } = await supabase
     .from('booking_metadata')
     .update({
-      user_email: normalizedEmail || undefined,
+      user_email: emailTarget || undefined,
       metadata: {
         ...existingMetadata,
         paymentOption: 'counter',
         paymentStatus: 'pending_counter',
         awaitingEmailConfirmation: true,
         counterSelectedAt: new Date().toISOString(),
+        confirmationEmailStatus: emailResult.status,
+        ...(emailResult.providerId ? { confirmationEmailProviderId: emailResult.providerId } : {}),
+        ...(emailResult.status === 'sent' ? { confirmationEmailSentAt: new Date().toISOString() } : {}),
+        ...(emailResult.error ? { confirmationEmailError: emailResult.error } : {}),
       },
       updated_at: new Date().toISOString(),
     })
@@ -605,8 +686,94 @@ async function markCounterPayment(body) {
       success: true,
       bookingId: normalizedBookingId,
       paymentStatus: 'pending_counter',
+      confirmationEmailStatus: emailResult.status,
+      confirmationEmailError: emailResult.error || null,
     },
   };
+}
+
+function getReservationLabel(roomId) {
+  const normalizedRoom = typeof roomId === 'string' && roomId.trim() ? roomId.trim() : 'your selected room';
+  return `Gateway Resort room ${normalizedRoom}`;
+}
+
+async function sendCounterConfirmationEmail({ toEmail, bookingId, roomId }) {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const resendFromEmail = process.env.RESEND_FROM_EMAIL;
+
+  if (!resendApiKey || !resendFromEmail) {
+    return {
+      status: 'skipped',
+      error: 'Missing RESEND_API_KEY or RESEND_FROM_EMAIL',
+    };
+  }
+
+  const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+  const reservationLabel = getReservationLabel(roomId);
+  const subject = 'Gateway Resort reservation received - awaiting email confirmation';
+
+  const html = [
+    '<div style="font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;">',
+    '<h2 style="margin: 0 0 12px;">Reservation received</h2>',
+    `<p>Thank you. We received your reservation for <strong>${reservationLabel}</strong>.</p>`,
+    '<p>Your reservation is currently awaiting email confirmation.</p>',
+    '<p>We will hold your room until <strong>6:00 PM</strong> on arrival day if it is not confirmed. After 6:00 PM, unconfirmed reservations may be released.</p>',
+    '<p>No cancellation fee is charged.</p>',
+    `<p><strong>Booking ID:</strong> ${bookingId}</p>`,
+    `<p>You can return to the booking page here: <a href="${appBaseUrl}">${appBaseUrl}</a></p>`,
+    '<p style="margin-top: 20px;">Gateway Resort</p>',
+    '</div>',
+  ].join('');
+
+  const text = [
+    'Reservation received',
+    '',
+    `Thank you. We received your reservation for ${reservationLabel}.`,
+    'Your reservation is currently awaiting email confirmation.',
+    'We will hold your room until 6:00 PM on arrival day if it is not confirmed.',
+    'After 6:00 PM, unconfirmed reservations may be released.',
+    'No cancellation fee is charged.',
+    '',
+    `Booking ID: ${bookingId}`,
+    `Return to booking page: ${appBaseUrl}`,
+    '',
+    'Gateway Resort',
+  ].join('\n');
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: resendFromEmail,
+        to: [toEmail],
+        subject,
+        html,
+        text,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        status: 'failed',
+        error: payload?.message || payload?.error || `Email provider error (${response.status})`,
+      };
+    }
+
+    return {
+      status: 'sent',
+      providerId: typeof payload?.id === 'string' ? payload.id : undefined,
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown email error',
+    };
+  }
 }
 
 async function updateBookingPaymentStatus(bookingId, paymentStatus, paymentFields) {

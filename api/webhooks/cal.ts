@@ -141,6 +141,18 @@ function extractRoomIdFromPayload(payload: any, metadata: any): string | null {
   return null;
 }
 
+function extractClientBookingRef(metadata: any, payload: any): string | null {
+  const candidates = [
+    metadata?.clientBookingRef,
+    metadata?.client_booking_ref,
+    payload?.metadata?.clientBookingRef,
+    payload?.metadata?.client_booking_ref,
+  ];
+
+  const value = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return typeof value === 'string' ? value.trim() : null;
+}
+
 /**
  * Cal.com Webhook Handler
  * Stores Cal booking lifecycle events in Supabase booking_metadata.
@@ -200,6 +212,7 @@ export default async function handler(req: any, res: any) {
     const normalizedEmail =
       normalizeEmail(attendee?.email) || normalizeEmail(payload?.email) || 'unknown@unknown.local';
     const resolvedRoomId = extractRoomIdFromPayload(payload, metadata);
+    const clientBookingRef = extractClientBookingRef(metadata, payload);
 
     const baseRecord = {
       booking_id: bookingId,
@@ -211,6 +224,7 @@ export default async function handler(req: any, res: any) {
       event_id: payload?.eventTypeId ? String(payload.eventTypeId) : null,
       metadata: {
         ...metadata,
+        ...(clientBookingRef ? { clientBookingRef } : {}),
         calTriggerEvent: normalizedEvent,
         rawPayload: payload,
       },

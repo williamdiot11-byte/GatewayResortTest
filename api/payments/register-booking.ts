@@ -9,6 +9,7 @@ const supabase = createClient(
 
 interface RegisterBookingPayload {
   bookingId?: string;
+  clientBookingRef?: string;
   roomId?: string;
   email?: string;
   clerkUserId?: string;
@@ -50,12 +51,14 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { bookingId, roomId, email, clerkUserId, userName } = (req.body || {}) as RegisterBookingPayload;
+    const { bookingId, clientBookingRef, roomId, email, clerkUserId, userName } = (req.body || {}) as RegisterBookingPayload;
 
     const normalizedBookingId =
       typeof bookingId === 'string' && bookingId.trim()
         ? bookingId.trim()
         : `pending-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const normalizedClientBookingRef =
+      typeof clientBookingRef === 'string' && clientBookingRef.trim() ? clientBookingRef.trim() : '';
     const normalizedRoomId = typeof roomId === 'string' ? roomId.trim() : '';
     const normalizedEmail = normalizeEmail(email);
 
@@ -65,6 +68,20 @@ export default async function handler(req: any, res: any) {
     }
 
     const validUserId = await resolveValidUserId(clerkUserId);
+    const { data: existingRow, error: existingRowError } = await supabase
+      .from('booking_metadata')
+      .select('metadata')
+      .eq('booking_id', normalizedBookingId)
+      .maybeSingle();
+
+    if (existingRowError) {
+      console.error('Error loading existing booking during fallback registration:', existingRowError);
+      res.status(500).json({ error: 'Failed to register booking' });
+      return;
+    }
+
+    const existingMetadata =
+      typeof existingRow?.metadata === 'object' && existingRow.metadata ? existingRow.metadata : {};
 
     const { error } = await supabase
       .from('booking_metadata')
@@ -77,8 +94,10 @@ export default async function handler(req: any, res: any) {
           user_name: typeof userName === 'string' ? userName : null,
           booking_date: new Date().toISOString(),
           metadata: {
-            bookingSource: 'cal_embed_fallback',
+            ...existingMetadata,
+            bookingSource: existingMetadata.bookingSource || 'cal_embed_fallback',
             calTriggerEvent: 'BOOKING_CREATED',
+            ...(normalizedClientBookingRef ? { clientBookingRef: normalizedClientBookingRef } : {}),
           },
           updated_at: new Date().toISOString(),
         },
@@ -91,7 +110,11 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    res.status(200).json({ success: true, bookingId: normalizedBookingId });
+    res.status(200).json({
+      success: true,
+      bookingId: normalizedBookingId,
+      clientBookingRef: normalizedClientBookingRef || undefined,
+    });
   } catch (error) {
     console.error('Register booking fallback error:', error);
     res.status(500).json({ error: 'Failed to register booking' });

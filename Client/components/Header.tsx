@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Phone } from 'lucide-react';
+import { BookOpen, Phone } from 'lucide-react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/clerk-react';
 import { User } from '../types';
 
@@ -10,11 +10,12 @@ interface HeaderProps {
   onSignOut: () => void;
   onNavigateLogin: () => void;
   onNavigateAdmin: () => void;
+  onNavigateAccount: () => void;
   currentView: 'home' | 'gallery' | 'admin';
   user: User | null;
 }
 
-const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSignOut, onNavigateLogin, onNavigateAdmin, currentView, user }) => {
+const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSignOut, onNavigateLogin, onNavigateAdmin, onNavigateAccount, currentView, user }) => {
   const { isSignedIn } = useUser();
   const [activeSection, setActiveSection] = useState<string>('home');
 
@@ -84,7 +85,12 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSi
         <div className="max-w-7xl mx-auto px-6 sm:px-10 flex justify-between items-center">
           
           {/* Star Logo - Remains White */}
-          <div onClick={() => onNavigateHome()} className="group relative cursor-pointer p-1">
+          <button
+            type="button"
+            onClick={() => onNavigateHome()}
+            className="group relative cursor-pointer p-1"
+            aria-label="Go to home"
+          >
             <div className="shooting-star-particle">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2L14.5 9H22L16 14L18.5 21L12 17L5.5 21L8 14L2 9H9.5L12 2Z" fill="#FBBF24" className="drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
@@ -96,12 +102,13 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSi
               <path d="M54 52C55 51 58 51 59 52" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
               <path d="M47 62C48 64 52 64 53 62" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
             </svg>
-          </div>
+          </button>
           
           <nav className="hidden md:flex space-x-12 lg:space-x-16 items-center">
             {navLinks.map((link) => (
               <button
                 key={link.id}
+                type="button"
                 onClick={() => handleNavClick(link.id)}
                 className={`relative py-2 text-[10px] font-black tracking-[0.4em] uppercase transition-all duration-500 ${
                   (activeSection === link.id || (link.id === 'rooms' && currentView === 'gallery')) 
@@ -118,6 +125,7 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSi
           <div className="flex items-center gap-4">
             {user?.role === 'admin' && (
               <button
+                type="button"
                 onClick={handleAdminClick}
                 className={`px-5 py-3 rounded-full font-black text-[9px] tracking-[0.3em] uppercase border transition-all shadow-sm ${
                   currentView === 'admin'
@@ -130,27 +138,38 @@ const Header: React.FC<HeaderProps> = ({ onNavigateHome, onNavigateGallery, onSi
             )}
 
             {isSignedIn ? (
-              <UserButton
-                afterSignOutUrl="/"
-                userProfileMode="modal"
-                userProfileProps={{
-                  appearance: {
-                    elements: {
-                      // Keep Manage profile access, but hide avatar image editing controls.
-                      avatarImageActions: 'hidden',
-                      avatarImageActionsUpload: 'hidden',
-                      avatarImageActionsRemove: 'hidden',
+              <div className="flex items-center gap-2">
+                <UserButton
+                  afterSignOutUrl="/"
+                  userProfileMode="modal"
+                  userProfileProps={{
+                    appearance: {
+                      elements: {
+                        // Keep Manage profile access, but hide avatar image editing controls.
+                        avatarImageActions: 'hidden',
+                        avatarImageActionsUpload: 'hidden',
+                        avatarImageActionsRemove: 'hidden',
+                      },
                     },
-                  },
-                }}
-                appearance={{
-                  elements: {
-                    avatarBox: 'w-9 h-9',
-                    userButtonPopoverCard: 'rounded-xl shadow-lg border border-slate-100',
-                    userButtonPopoverActionButton: 'text-slate-700 hover:bg-orange-50 hover:text-orange-600',
-                  }
-                }}
-              />
+                  }}
+                  appearance={{
+                    elements: {
+                      avatarBox: 'w-9 h-9',
+                      userButtonPopoverCard: 'rounded-xl shadow-lg border border-slate-100',
+                      userButtonPopoverActionButton: 'text-slate-700 hover:bg-orange-50 hover:text-orange-600',
+                      userButtonPopoverCustomItemButton: 'text-slate-700 hover:bg-orange-50 hover:text-orange-600',
+                    }
+                  }}
+                >
+                  <UserButton.MenuItems>
+                    <UserButton.Action
+                      label="Booking History"
+                      labelIcon={<BookOpen size={14} />}
+                      onClick={onNavigateAccount}
+                    />
+                  </UserButton.MenuItems>
+                </UserButton>
+              </div>
             ) : (
               <div className="flex items-center gap-3">
                 <SignInButton mode="modal">

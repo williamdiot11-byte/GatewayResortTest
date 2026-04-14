@@ -9,6 +9,7 @@ const supabase = createClient(
 interface ResolveBookingPayload {
   roomId?: string;
   email?: string;
+  clientBookingRef?: string;
   clerkUserId?: string;
 }
 
@@ -33,6 +34,18 @@ function extractRoomIdFromMetadata(metadata: any): string | null {
   return null;
 }
 
+function extractClientBookingRefFromMetadata(metadata: any): string | null {
+  const candidates = [
+    metadata?.clientBookingRef,
+    metadata?.client_booking_ref,
+    metadata?.rawPayload?.metadata?.clientBookingRef,
+    metadata?.rawPayload?.metadata?.client_booking_ref,
+  ];
+
+  const value = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return typeof value === 'string' ? value.trim() : null;
+}
+
 export default async function handler(req: any, res: any) {
   if (applyCors(req, res)) {
     return;
@@ -44,26 +57,46 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { roomId, email, clerkUserId } = (req.body || {}) as ResolveBookingPayload;
+    const { roomId, email, clientBookingRef, clerkUserId } = (req.body || {}) as ResolveBookingPayload;
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedClientBookingRef = typeof clientBookingRef === 'string' ? clientBookingRef.trim() : '';
 
-    if (!roomId || !normalizedEmail) {
-      res.status(400).json({ error: 'roomId and email are required' });
+    if (!normalizedClientBookingRef && (!roomId || !normalizedEmail)) {
+      res.status(400).json({ error: 'clientBookingRef or roomId and email are required' });
       return;
     }
 
-    let query = supabase
-      .from('booking_metadata')
-      .select('booking_id, created_at')
-      .eq('room_id', roomId)
-      .eq('user_email', normalizedEmail)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let data: any = null;
+    let error: any = null;
 
-    let { data, error } = await query;
+    if (normalizedClientBookingRef) {
+      const directMatch = await supabase
+        .from('booking_metadata')
+        .select('booking_id, created_at')
+        .contains('metadata', { clientBookingRef: normalizedClientBookingRef })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (!data && clerkUserId) {
+      data = directMatch.data;
+      error = directMatch.error;
+    }
+
+    if (!data && !error && roomId && normalizedEmail) {
+      const query = await supabase
+        .from('booking_metadata')
+        .select('booking_id, created_at')
+        .eq('room_id', roomId)
+        .eq('user_email', normalizedEmail)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      data = query.data;
+      error = query.error;
+    }
+
+    if (!data && !error && clerkUserId && roomId) {
       const fallback = await supabase
         .from('booking_metadata')
         .select('booking_id, created_at')
@@ -77,7 +110,7 @@ export default async function handler(req: any, res: any) {
       error = fallback.error;
     }
 
-    if (!data && !error) {
+    if (!data && !error && normalizedEmail) {
       const recentThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const fallbackRows = await supabase
         .from('booking_metadata')
@@ -91,6 +124,10 @@ export default async function handler(req: any, res: any) {
         error = fallbackRows.error;
       } else {
         const matched = (fallbackRows.data || []).find((row: any) => {
+          if (normalizedClientBookingRef && extractClientBookingRefFromMetadata(row?.metadata || {}) === normalizedClientBookingRef) {
+            return true;
+          }
+
           if (row?.room_id === roomId) {
             return true;
           }

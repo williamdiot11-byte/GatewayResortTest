@@ -45,28 +45,13 @@
      ```
 4. Save the template
 
-### 1.4 Update Supabase Client
+### 1.4 Verify Supabase Client Auth Pattern
 
-The client is already configured! Just verify in `Client/services/supabaseClient.ts` that it uses Clerk JWT:
+The app uses `Client/hooks/useSupabaseClient.ts` (not the static `Client/services/supabaseClient.ts`) so Clerk JWT can be attached per request.
 
-```typescript
-import { useAuth } from '@clerk/clerk-react'
-
-const { getToken } = useAuth()
-
-const supabase = createClient(
-  supabaseUrl,
-  supabaseAnonKey,
-  {
-    global: {
-      headers: async () => {
-        const token = await getToken({ template: 'supabase' })
-        return token ? { Authorization: `Bearer ${token}` } : {}
-      }
-    }
-  }
-)
-```
+Verify:
+- Components performing authenticated reads/writes import `useSupabaseClient`.
+- No new authenticated flow is added via static `supabaseClient.ts`.
 
 ---
 
@@ -116,14 +101,15 @@ const supabase = createClient(
    - Duration: Custom (1 day minimum)
    - Location: Your resort address
 
-### 3.2 Get Cal.com API Key
+### 3.2 Configure Cal.com Booking Link
 
-1. Go to **Settings** → **Developer** → **API Keys**
-2. Create new API key
-3. Add to `Client/.env.local`:
-   ```env
-   VITE_CAL_API_KEY=cal_live_...
-   ```
+Set the booking link slug in `Client/.env.local`:
+
+```env
+VITE_CAL_BOOKING_LINK=william-diot-fbbkje/30min
+```
+
+Note: frontend runtime does not currently consume `VITE_CAL_API_KEY`.
 
 ### 3.3 Configure Cal.com Booking Questions
 

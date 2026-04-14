@@ -9,6 +9,11 @@ interface BookingPageProps {
   onBack: () => void;
 }
 
+interface ResolveBookingOptions {
+  emailOverride?: string;
+  clientBookingRefOverride?: string;
+}
+
 const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
   const { user } = useUser();
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
@@ -21,6 +26,13 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
       }
     }
     return user?.primaryEmailAddress?.emailAddress || '';
+  });
+  const [clientBookingRef] = useState(() => {
+    if (typeof window !== 'undefined' && typeof window.crypto?.randomUUID === 'function') {
+      return `gr-${roomId}-${window.crypto.randomUUID()}`;
+    }
+
+    return `gr-${roomId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -100,6 +112,7 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
         },
         body: JSON.stringify({
           bookingId: normalizedBookingId || undefined,
+          clientBookingRef,
           roomId,
           email: fallbackEmail,
           clerkUserId: latestUserRef.current?.id || null,
@@ -114,6 +127,7 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
             status: response.status,
             error: payload?.error || null,
             bookingId: normalizedBookingId || null,
+            clientBookingRef,
             roomId,
             email: fallbackEmail,
           });
@@ -128,6 +142,7 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
         console.warn('register-booking fallback request error', {
           error,
           bookingId: normalizedBookingId || null,
+          clientBookingRef,
           roomId,
           email: fallbackEmail,
         });
@@ -164,6 +179,7 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
           if (import.meta.env.DEV) {
             console.log('Cal bookingSuccessful payload parsed', {
               bookingIdFromEvent,
+              clientBookingRef,
               emailFromEvent,
               roomId,
               hasData: !!event?.data,
@@ -194,8 +210,11 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
           }
 
           const fallbackEmail = emailFromEvent || latestContactEmailRef.current;
-          if (fallbackEmail) {
-            const found = await resolveLatestBookingId(fallbackEmail);
+          if (fallbackEmail || clientBookingRef) {
+            const found = await resolveLatestBookingId({
+              emailOverride: fallbackEmail || undefined,
+              clientBookingRefOverride: clientBookingRef,
+            });
             if (!found) {
               setPaymentMessage('Booking confirmed, but we are still syncing details. Please wait a few seconds and try again.');
             }
@@ -205,9 +224,10 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
     })();
   }, []);
 
-  const resolveLatestBookingId = async (emailOverride?: string): Promise<string | null> => {
-    const lookupEmail = (emailOverride || contactEmail).trim();
-    if (!lookupEmail) {
+  const resolveLatestBookingId = async (options?: ResolveBookingOptions): Promise<string | null> => {
+    const lookupEmail = (options?.emailOverride || contactEmail).trim();
+    const lookupClientBookingRef = (options?.clientBookingRefOverride || clientBookingRef).trim();
+    if (!lookupEmail && !lookupClientBookingRef) {
       setPaymentMessage('Add your email address first so we can locate your booking.');
       return null;
     }
@@ -224,7 +244,8 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
           },
           body: JSON.stringify({
             roomId,
-            email: lookupEmail,
+            email: lookupEmail || undefined,
+            clientBookingRef: lookupClientBookingRef || undefined,
             clerkUserId: user?.id || null,
           }),
         });
@@ -248,7 +269,7 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
         await new Promise((resolve) => setTimeout(resolve, 1500));
       }
 
-      const fallbackBookingId = await registerBookingFromEvent(undefined, lookupEmail);
+      const fallbackBookingId = await registerBookingFromEvent(undefined, lookupEmail || undefined);
       if (fallbackBookingId) {
         setResolvedBookingId(fallbackBookingId);
         setPaymentMessage('Reservation synced. Choose your payment option below.');
@@ -383,7 +404,8 @@ const BookingPage: React.FC<BookingPageProps> = ({ roomId, onBack }) => {
             theme: "light",
             metadata: {
               clerkUserId: user?.id || '',
-              roomId: roomId
+              roomId: roomId,
+              clientBookingRef,
             }
           }}
         />
